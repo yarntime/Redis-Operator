@@ -26,9 +26,9 @@ type AdminInterface interface {
 	Connections() AdminConnectionsInterface
 	// Close the admin connections
 	Close()
+	// GetClusterInfos get node infos for all nodes
 	// InitRedisCluster used to configure the first node of a cluster
 	InitRedisCluster(addr string) error
-	// GetClusterInfos get node infos for all nodes
 	GetClusterInfos() (*ClusterInfos, error)
 	// GetClusterInfosSelected return the Nodes infos for all nodes selected in the cluster
 	GetClusterInfosSelected(addrs []string) (*ClusterInfos, error)

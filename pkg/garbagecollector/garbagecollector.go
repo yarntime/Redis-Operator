@@ -61,10 +61,13 @@ func (c *GarbageCollector) InformerSync() cache.InformerSynced {
 // then retrieve from the API and in case NotFound then remove via DeleteCollection primitive
 func (c *GarbageCollector) CollectRedisClusterGarbage() error {
 	errs := []error{}
-	if err := c.collectRedisClusterPods(); err != nil {
+	if err := c.collectRedisClusterStatefulSets(); err != nil {
 		errs = append(errs, err)
 	}
 	if err := c.collectRedisClusterServices(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.collectRedisClusterPBDs(); err != nil {
 		errs = append(errs, err)
 	}
 	return utilerrors.NewAggregate(errs)
@@ -150,13 +153,104 @@ func (c *GarbageCollector) collectRedisClusterServices() error {
 				continue
 			}
 			// NotFound error: Hence remove all the pods.
-			if err := c.kubeClient.CoreV1().Services(service.Namespace).DeleteCollection(CascadeDeleteOptions(0), metav1.ListOptions{
-				LabelSelector: rapi.ClusterNameLabelKey + "=" + redisclusterName}); err != nil {
-				errs = append(errs, fmt.Errorf("Unable to delete Collection of services for rediscluster %s/%s", service.Namespace, redisclusterName))
+			if err := c.kubeClient.CoreV1().Services(service.Namespace).Delete(service.Name, metav1.NewDeleteOptions(1)); err != nil {
+				errs = append(errs, fmt.Errorf("Unable to delete Collection of services for rediscluster %s/%s caused by: %s", service.Namespace, redisclusterName, err.Error()))
 				continue
 			}
 			collected[path.Join(service.Namespace, redisclusterName)] = struct{}{} // inserted in the collected map
 			glog.Infof("Removed all services for rediscluster %s/%s", service.Namespace, redisclusterName)
+		}
+	}
+	return utilerrors.NewAggregate(errs)
+}
+
+// collectRedisClusterStatefulSets collect the orphaned pods. First looking in the rediscluster informer list
+// then retrieve from the API and in case NotFound then remove via DeleteCollection primitive
+func (c *GarbageCollector) collectRedisClusterStatefulSets() error {
+	glog.V(4).Infof("Collecting garbage statefulset")
+	statefulSets, err := c.kubeClient.AppsV1beta1().StatefulSets(metav1.NamespaceAll).List(metav1.ListOptions{
+		LabelSelector: rapi.ClusterNameLabelKey,
+	})
+	if err != nil {
+		return fmt.Errorf("unable to list rediscluster statefulset to be collected: %v", err)
+	}
+	errs := []error{}
+	collected := make(map[string]struct{})
+	for _, set := range statefulSets.Items {
+		redisclusterName, found := set.Labels[rapi.ClusterNameLabelKey]
+		if !found || len(redisclusterName) == 0 {
+			errs = append(errs, fmt.Errorf("Unable to find statefulset name for statefulset: %s/%s", set.Namespace, set.Name))
+			continue
+		}
+		if _, done := collected[path.Join(set.Namespace, redisclusterName)]; done {
+			continue // already collected so skip
+		}
+		if _, err := c.rcLister.RedisClusters(set.Namespace).Get(redisclusterName); err == nil || !apierrors.IsNotFound(err) {
+			if err != nil {
+				errs = append(errs, fmt.Errorf("Unexpected error retrieving rediscluster %s/%s cache: %v", set.Namespace, redisclusterName, err))
+			}
+			continue
+		}
+		// RedisCluster couldn't be find in cache. Trying to get it via APIs.
+		if _, err := c.rcClient.RedisoperatorV1().RedisClusters(set.Namespace).Get(redisclusterName, metav1.GetOptions{}); err != nil {
+			if !apierrors.IsNotFound(err) {
+				errs = append(errs, fmt.Errorf("Unexpected error retrieving rediscluster %s/%s for statefulset %s/%s: %v", set.Namespace, redisclusterName, set.Namespace, set.Name, err))
+				continue
+			}
+			// NotFound error: Hence remove all the statefulsets.
+			if err := c.kubeClient.AppsV1beta1().StatefulSets(set.Namespace).DeleteCollection(CascadeDeleteOptions(0), metav1.ListOptions{
+				LabelSelector: rapi.ClusterNameLabelKey + "=" + redisclusterName}); err != nil {
+				errs = append(errs, fmt.Errorf("Unable to delete Collection of statefulset for rediscluster %s/%s", set.Namespace, redisclusterName))
+				continue
+			}
+			collected[path.Join(set.Namespace, redisclusterName)] = struct{}{} // inserted in the collected map
+			glog.Infof("Removed all statefulset for rediscluster %s/%s", set.Namespace, redisclusterName)
+		}
+	}
+	return utilerrors.NewAggregate(errs)
+}
+
+// collectRedisClusterPBDs collect the orphaned pods. First looking in the rediscluster informer list
+// then retrieve from the API and in case NotFound then remove via DeleteCollection primitive
+func (c *GarbageCollector) collectRedisClusterPBDs() error {
+	glog.V(4).Infof("Collecting garbage podDisruptionBudget")
+	pbds, err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(metav1.NamespaceAll).List(metav1.ListOptions{
+		LabelSelector: rapi.ClusterNameLabelKey,
+	})
+	if err != nil {
+		return fmt.Errorf("unable to list rediscluster podDisruptionBudget to be collected: %v", err)
+	}
+	errs := []error{}
+	collected := make(map[string]struct{})
+	for _, set := range pbds.Items {
+		redisclusterName, found := set.Labels[rapi.ClusterNameLabelKey]
+		if !found || len(redisclusterName) == 0 {
+			errs = append(errs, fmt.Errorf("Unable to find podDisruptionBudget name for statefulset: %s/%s", set.Namespace, set.Name))
+			continue
+		}
+		if _, done := collected[path.Join(set.Namespace, redisclusterName)]; done {
+			continue // already collected so skip
+		}
+		if _, err := c.rcLister.RedisClusters(set.Namespace).Get(redisclusterName); err == nil || !apierrors.IsNotFound(err) {
+			if err != nil {
+				errs = append(errs, fmt.Errorf("Unexpected error retrieving rediscluster %s/%s cache: %v", set.Namespace, redisclusterName, err))
+			}
+			continue
+		}
+		// RedisCluster couldn't be find in cache. Trying to get it via APIs.
+		if _, err := c.rcClient.RedisoperatorV1().RedisClusters(set.Namespace).Get(redisclusterName, metav1.GetOptions{}); err != nil {
+			if !apierrors.IsNotFound(err) {
+				errs = append(errs, fmt.Errorf("Unexpected error retrieving rediscluster %s/%s for statefulset %s/%s: %v", set.Namespace, redisclusterName, set.Namespace, set.Name, err))
+				continue
+			}
+			// NotFound error: Hence remove all the podDisruptionBudgets.
+			if err := c.kubeClient.PolicyV1beta1().PodDisruptionBudgets(set.Namespace).DeleteCollection(CascadeDeleteOptions(0), metav1.ListOptions{
+				LabelSelector: rapi.ClusterNameLabelKey + "=" + redisclusterName}); err != nil {
+				errs = append(errs, fmt.Errorf("Unable to delete Collection of podDisruptionBudget for rediscluster %s/%s", set.Namespace, redisclusterName))
+				continue
+			}
+			collected[path.Join(set.Namespace, redisclusterName)] = struct{}{} // inserted in the collected map
+			glog.Infof("Removed all statefulset for rediscluster %s/%s", set.Namespace, redisclusterName)
 		}
 	}
 	return utilerrors.NewAggregate(errs)

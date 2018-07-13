@@ -134,10 +134,10 @@ func compareStringValue(name string, old, new string) bool {
 }
 
 func needClusterOperation(cluster *rapi.RedisCluster) bool {
-	if needRollingUpdate(cluster) {
+	/*if needRollingUpdate(cluster) {
 		glog.V(6).Info("needClusterOperation---needRollingUpdate")
 		return true
-	}
+	}*/
 
 	if needMorePods(cluster) {
 		glog.V(6).Info("needClusterOperation---needMorePods")

@@ -30,7 +30,10 @@ import (
 	rlisters "github.com/amadeusitgroup/redis-operator/pkg/client/listers/redis/v1"
 	"github.com/amadeusitgroup/redis-operator/pkg/controller/pod"
 	"github.com/amadeusitgroup/redis-operator/pkg/controller/sanitycheck"
+	"github.com/amadeusitgroup/redis-operator/pkg/controller/statefulset"
 	"github.com/amadeusitgroup/redis-operator/pkg/redis"
+	apps "k8s.io/api/apps/v1beta1"
+	applisters "k8s.io/client-go/listers/apps/v1beta1"
 )
 
 // Controller contains all controller fields
@@ -47,11 +50,15 @@ type Controller struct {
 	serviceLister corev1listers.ServiceLister
 	ServiceSynced cache.InformerSynced
 
+	statefulSetLister applisters.StatefulSetLister
+	StatefulSetSynced cache.InformerSynced
+
 	podDisruptionBudgetLister  policyv1listers.PodDisruptionBudgetLister
 	PodDiscruptionBudgetSynced cache.InformerSynced
 
 	podControl                 pod.RedisClusterControlInteface
 	serviceControl             ServicesControlInterface
+	statefulSetControl         statefulset.StatefulSetControlInteface
 	podDisruptionBudgetControl PodDisruptionBudgetsControlInterface
 
 	updateHandler func(*rapi.RedisCluster) (*rapi.RedisCluster, error) // callback to update RedisCluster. Added as member for testing
@@ -74,6 +81,7 @@ func NewController(cfg *Config, kubeClient clientset.Interface, redisClient rcli
 	podInformer := kubeInformer.Core().V1().Pods()
 	redisInformer := rInformer.Redisoperator().V1().RedisClusters()
 	podDisruptionBudgetInformer := kubeInformer.Policy().V1beta1().PodDisruptionBudgets()
+	statefulInformer := kubeInformer.Apps().V1beta1().StatefulSets()
 
 	ctrl := &Controller{
 		kubeClient:                 kubeClient,
@@ -84,6 +92,8 @@ func NewController(cfg *Config, kubeClient clientset.Interface, redisClient rcli
 		PodSynced:                  podInformer.Informer().HasSynced,
 		serviceLister:              serviceInformer.Lister(),
 		ServiceSynced:              serviceInformer.Informer().HasSynced,
+		statefulSetLister:          statefulInformer.Lister(),
+		StatefulSetSynced:          statefulInformer.Informer().HasSynced,
 		podDisruptionBudgetLister:  podDisruptionBudgetInformer.Lister(),
 		PodDiscruptionBudgetSynced: podDisruptionBudgetInformer.Informer().HasSynced,
 
@@ -109,9 +119,18 @@ func NewController(cfg *Config, kubeClient clientset.Interface, redisClient rcli
 		},
 	)
 
+	statefulInformer.Informer().AddEventHandler(
+		cache.ResourceEventHandlerFuncs{
+			AddFunc:    ctrl.onAddStatefulSet,
+			UpdateFunc: ctrl.onUpdateStatefulSet,
+			DeleteFunc: ctrl.onDeleteStatefulSet,
+		},
+	)
+
 	ctrl.updateHandler = ctrl.updateRedisCluster
 	ctrl.podControl = pod.NewRedisClusterControl(ctrl.podLister, ctrl.kubeClient, ctrl.recorder)
 	ctrl.serviceControl = NewServicesControl(ctrl.kubeClient, ctrl.recorder)
+	ctrl.statefulSetControl = statefulset.NewStatefulSetControl(ctrl.statefulSetLister, ctrl.kubeClient, ctrl.recorder)
 	ctrl.podDisruptionBudgetControl = NewPodDisruptionBudgetsControl(ctrl.kubeClient, ctrl.recorder)
 
 	return ctrl
@@ -274,6 +293,18 @@ func (c *Controller) syncCluster(rediscluster *rapi.RedisCluster) (forceRequeue 
 	if redisClusterPodDisruptionBudget == nil {
 		if _, err = c.podDisruptionBudgetControl.CreateRedisClusterPodDisruptionBudget(rediscluster); err != nil {
 			glog.Errorf("RedisCluster-Operator.sync unable to create podDisruptionBudget associated to the RedisCluster: %s/%s", rediscluster.Namespace, rediscluster.Name)
+			return forceRequeue, err
+		}
+	}
+
+	redisClusterStatefulSet, err := c.statefulSetControl.GetRedisClusterStatefulSet(rediscluster)
+	if err != nil {
+		glog.Errorf("RedisCluster-Operator.sync unable to retrieves statefulset associated to the RedisCluster: %s/%s", rediscluster.Namespace, rediscluster.Name)
+		return forceRequeue, err
+	}
+	if redisClusterStatefulSet == nil {
+		if _, err = c.statefulSetControl.CreateStatefulSet(rediscluster); err != nil {
+			glog.Errorf("RedisCluster-Operator.sync unable to create statefulset associated to the RedisCluster: %s/%s", rediscluster.Namespace, rediscluster.Name)
 			return forceRequeue, err
 		}
 	}
@@ -613,6 +644,75 @@ func (c *Controller) onUpdatePod(oldObj, newObj interface{}) {
 	// TODO: in case of labelSelector relabelling?
 }
 
+func (c *Controller) onAddStatefulSet(obj interface{}) {
+	set, ok := obj.(*apps.StatefulSet)
+	if !ok {
+		glog.Errorf("adding Pod, expected statefulset object. Got: %+v", obj)
+		return
+	}
+
+	redisCluster, err := c.getRedisClusterFromStatefulSet(set)
+	if err != nil {
+		glog.Errorf("unable to retrieve the associated rediscluster for statefulset %s/%s:%v", set.Namespace, set.Name, err)
+		return
+	}
+	if redisCluster == nil {
+		glog.Errorf("empty redisCluster. Unable to retrieve the associated rediscluster for the statefulset  %s/%s", set.Namespace, set.Name)
+		return
+	}
+
+	c.enqueue(redisCluster)
+}
+
+func (c *Controller) onUpdateStatefulSet(oldObj, newObj interface{}) {
+	oldSet := oldObj.(*apps.StatefulSet)
+	newSet := newObj.(*apps.StatefulSet)
+	if oldSet.ResourceVersion == newSet.ResourceVersion { // Since periodic resync will send update events for all known Pods.
+		return
+	}
+	glog.V(6).Infof("onUpdateStatefulset old=%v, cur=%v ", oldSet.Name, newSet.Name)
+	redisCluster, err := c.getRedisClusterFromStatefulSet(newSet)
+	if err != nil {
+		glog.Errorf("RedisCluster-Operator.onUpdateStatefulset cannot get redisclusters for statefulset %s/%s: %v", newSet.Namespace, newSet.Name, err)
+		return
+	}
+	if redisCluster == nil {
+		glog.Errorf("empty redisCluster .onUpdateStatefulset cannot get redisclusters for statefulset %s/%s", newSet.Namespace, newSet.Name)
+		return
+	}
+
+	c.enqueue(redisCluster)
+}
+
+func (c *Controller) onDeleteStatefulSet(obj interface{}) {
+	set, ok := obj.(*apps.StatefulSet)
+	glog.V(6).Infof("onDeleteStatefulset old=%v", set.Name)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			glog.Errorf("Couldn't get object from tombstone %+v", obj)
+			return
+		}
+		set, ok = tombstone.Obj.(*apps.StatefulSet)
+		if !ok {
+			glog.Errorf("Tombstone contained object that is not a Statefulset %+v", obj)
+			return
+		}
+	}
+
+	redisCluster, err := c.getRedisClusterFromStatefulSet(set)
+	if err != nil {
+		glog.Errorf("RedisCluster-Operator.onDeleteStatefulset: %v", err)
+		return
+	}
+	if redisCluster == nil {
+		glog.Errorf("empty redisCluster . RedisCluster-Operator.onDeleteStatefulset")
+		return
+	}
+
+	c.enqueue(redisCluster)
+}
+
 func (c *Controller) deleteRedisCluster(namespace, name string) error {
 	return nil
 }
@@ -627,4 +727,16 @@ func (c *Controller) getRedisClusterFromPod(pod *apiv1.Pod) (*rapi.RedisCluster,
 		return nil, fmt.Errorf("no rediscluster name found for pod. Pod %s/%s has no labels %s", pod.Namespace, pod.Name, rapi.ClusterNameLabelKey)
 	}
 	return c.redisClusterLister.RedisClusters(pod.Namespace).Get(clusterName)
+}
+
+func (c *Controller) getRedisClusterFromStatefulSet(set *apps.StatefulSet) (*rapi.RedisCluster, error) {
+	if len(set.Labels) == 0 {
+		return nil, fmt.Errorf("no rediscluster found for pod. Pod %s/%s has no labels", set.Namespace, set.Name)
+	}
+
+	clusterName, ok := set.Labels[rapi.ClusterNameLabelKey]
+	if !ok {
+		return nil, fmt.Errorf("no rediscluster name found for pod. Pod %s/%s has no labels %s", set.Namespace, set.Name, rapi.ClusterNameLabelKey)
+	}
+	return c.redisClusterLister.RedisClusters(set.Namespace).Get(clusterName)
 }

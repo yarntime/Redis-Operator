@@ -34,6 +34,7 @@ type Config struct {
 	RedisStartDelay time.Duration
 	HTTPServerAddr  string
 	RedisMaxMemory  uint32
+	PersistentData  bool
 }
 
 // NewRedisNodeConfig builds and returns a redis-operator Config
@@ -54,6 +55,8 @@ func (c *Config) AddFlags(fs *pflag.FlagSet) {
 	fs.Uint32Var(&c.RedisMaxMemory, "max-memory", RedisMaxMemoryDefault, "redis max memory")
 
 	fs.StringVar(&c.HTTPServerAddr, "http-addr", HTTPServerAddrDefault, "the http server listen address")
+
+	fs.BoolVar(&c.PersistentData, "persistent-data", false, "whether persist data to disk. default to false.")
 
 	c.Redis.AddFlags(fs)
 	c.Cluster.AddFlags(fs)

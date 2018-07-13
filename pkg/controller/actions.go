@@ -35,13 +35,13 @@ func (c *Controller) clusterAction(admin redis.AdminInterface, cluster *rapi.Red
 				return false, err
 			}
 		}
-		pod, err2 := c.podControl.CreatePod(cluster)
+		/*pod, err2 := c.podControl.CreatePod(cluster)
 		if err2 != nil {
 			glog.Errorf("[clusterAction] unable to create a pod associated to the RedisCluster: %s/%s, err: %v", cluster.Namespace, cluster.Name, err2)
 			return false, err2
-		}
+		}*/
 
-		glog.V(3).Infof("[clusterAction]create a Pod %s/%s", pod.Namespace, pod.Name)
+		glog.V(3).Infof("[clusterAction]wait a Pod to be created")
 		return true, nil
 	}
 	if setScalingCondition(&cluster.Status, false) {
@@ -402,31 +402,31 @@ func (c *Controller) applyConfiguration(admin redis.AdminInterface, cluster *rap
 		return false, err
 	}
 
-	if needRollingUpdate(cluster) {
-		if setRollingUpdategCondition(&cluster.Status, true) {
+	/*	if needRollingUpdate(cluster) {
+			if setRollingUpdategCondition(&cluster.Status, true) {
+				if cluster, err = c.updateHandler(cluster); err != nil {
+					return false, err
+				}
+			}
+
+			glog.Info("applyConfiguration needRollingUpdate")
+			return c.manageRollingUpdate(admin, cluster, rCluster, nodes)
+		}
+		if setRollingUpdategCondition(&cluster.Status, false) {
 			if cluster, err = c.updateHandler(cluster); err != nil {
 				return false, err
 			}
 		}
 
-		glog.Info("applyConfiguration needRollingUpdate")
-		return c.manageRollingUpdate(admin, cluster, rCluster, nodes)
-	}
-	if setRollingUpdategCondition(&cluster.Status, false) {
-		if cluster, err = c.updateHandler(cluster); err != nil {
-			return false, err
-		}
-	}
-
-	if needLessPods(cluster) {
-		if setRebalancingCondition(&cluster.Status, true) {
-			if cluster, err = c.updateHandler(cluster); err != nil {
-				return false, err
+		if needLessPods(cluster) {
+			if setRebalancingCondition(&cluster.Status, true) {
+				if cluster, err = c.updateHandler(cluster); err != nil {
+					return false, err
+				}
 			}
-		}
-		glog.Info("applyConfiguration needLessPods")
-		return c.managePodScaleDown(admin, cluster, rCluster, nodes)
-	}
+			glog.Info("applyConfiguration needLessPods")
+			return c.managePodScaleDown(admin, cluster, rCluster, nodes)
+		}*/
 	if setRebalancingCondition(&cluster.Status, false) {
 		if cluster, err = c.updateHandler(cluster); err != nil {
 			return false, err

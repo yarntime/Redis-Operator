@@ -47,11 +47,18 @@ type RedisClusterSpec struct {
 	// if ServiceName is empty, the RedisCluster.Name will be use for creating the service.
 	ServiceName string `json:"serviceName,omitempty"`
 
+	Storage *Storage `json:"storage,omitempty"`
 	// PodTemplate contains the pod specificaton that should run the redis-server process
 	PodTemplate *kapiv1.PodTemplateSpec `json:"podTemplate,omitempty"`
 
 	// Labels for created redis-cluster (deployment, rs, pod) (if any)
 	AdditionalLabels map[string]string `json:"AdditionalLabels,omitempty"`
+}
+
+type Storage struct {
+	UseExternalDisk bool   `json:"useExternalDisk"`
+	DataDiskSize    string `json:"dataDiskSize"`
+	StorageClass    string `json:"storageClass"`
 }
 
 // RedisClusterStatus contains RedisCluster status

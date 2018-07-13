@@ -77,6 +77,13 @@ func (n *Node) UpdateNodeConfigFile() error {
 		}
 	}
 
+	if n.config.PersistentData {
+		err = n.addSettingInConfigFile("appendonly yes")
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

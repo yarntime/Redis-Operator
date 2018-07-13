@@ -56,9 +56,9 @@ type RedisClusterSpec struct {
 }
 
 type Storage struct {
-	UseExternalDisk bool   `json:"useExternalDisk"`
-	DataDiskSize    string `json:"dataDiskSize"`
-	StorageClass    string `json:"storageClass"`
+	UseExternalDisk bool    `json:"useExternalDisk"`
+	DataDiskSize    string  `json:"dataDiskSize"`
+	StorageClass    *string `json:"storageClass"`
 }
 
 // RedisClusterStatus contains RedisCluster status

@@ -135,7 +135,7 @@ func (r *RedisNode) init() (*Node, error) {
 		glog.Fatal("Unable to update the configuration file, err:", err)
 	}
 
-	me.ClearDataFolder() // may be needed if container crashes and restart at the same place
+	//me.ClearDataFolder() // may be needed if container crashes and restart at the same place
 
 	r.httpServer = &http.Server{Addr: r.config.HTTPServerAddr}
 	if err := r.configureHealth(); err != nil {

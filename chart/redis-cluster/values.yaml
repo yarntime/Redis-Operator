@@ -26,3 +26,5 @@ resources: {}
   # requests:
   #  cpu: 1
   #  memory: 1024Mi
+storage:
+  enabled: true

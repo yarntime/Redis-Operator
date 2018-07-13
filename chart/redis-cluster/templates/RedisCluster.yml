@@ -1,20 +1,22 @@
 apiVersion: "redisoperator.k8s.io/v1alpha1"
 kind: RedisCluster
 metadata:
-  name: {{ template "cluster-name" . }}
+  name: {{ .Release.Name }}
 spec:
   numberOfMaster: {{ .Values.numberOfMaster }}
   replicationFactor: {{ .Values.replicationFactor }}
   serviceName: {{ template "service-name" . }}
+{{- if .Values.storage.enabled }}
+  storage:
+    useExternalDisk: true
+    DataDiskSize: 1Gi
+{{- end }}
   podTemplate:
     metadata:
       labels:
         app: {{ template "name" . }}
     spec:
       serviceAccountName: "{{ .Values.serviceAccount }}"
-      volumes:
-        - name: data
-          emptyDir: {}
       containers:
         - name: redis-node
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -28,6 +30,9 @@ spec:
 {{- if .Values.resources }}
              "--max-memory=$(MEMORY_REQUEST)",
 {{- end }}
+{{- if .Values.storage.enabled }}
+            "--persistent-data=true",
+{{- end }}
             "--cluster-node-timeout=2000"]
           imagePullPolicy: IfNotPresent
           ports:
@@ -35,9 +40,6 @@ spec:
                 name:  redis
               - containerPort: 16379
                 name: cluster
-          volumeMounts:
-            - name: data
-              mountPath: /redis-data
           env:
             - name: POD_NAMESPACE
               valueFrom:

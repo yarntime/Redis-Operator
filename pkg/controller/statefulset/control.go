@@ -103,7 +103,7 @@ func initSet(redisCluster *rapi.RedisCluster) (*apps.StatefulSet, error) {
 	}
 
 	if redisCluster.Spec.Storage != nil && redisCluster.Spec.Storage.UseExternalDisk {
-		configSetVolume(redisCluster.Spec.Storage.DataDiskSize, redisCluster.Spec.Storage.StorageClass, result, desiredLabels)
+		configSetVolume(redisCluster.Spec.Storage.DataDiskSize, redisCluster.Spec.Storage.StorageClass, redisCluster.Spec.Storage.FastMode, result, desiredLabels)
 	}
 
 	hash, err := GenerateMD5Spec(&result.Spec)
@@ -115,7 +115,7 @@ func initSet(redisCluster *rapi.RedisCluster) (*apps.StatefulSet, error) {
 	return result, nil
 }
 
-func configSetVolume(diskSize string, className *string, set *apps.StatefulSet, labels map[string]string) {
+func configSetVolume(diskSize string, className *string, fastMode bool, set *apps.StatefulSet, labels map[string]string) {
 	volumeSize, _ := resource.ParseQuantity(diskSize)
 	set.Spec.Template.Spec.Containers[0].VolumeMounts = []kapiv1.VolumeMount{
 		{
@@ -134,6 +134,7 @@ func configSetVolume(diskSize string, className *string, set *apps.StatefulSet, 
 				AccessModes: []kapiv1.PersistentVolumeAccessMode{
 					kapiv1.ReadWriteOnce,
 				},
+				FastMode: fastMode,
 				Resources: kapiv1.ResourceRequirements{
 					Requests: kapiv1.ResourceList{
 						kapiv1.ResourceStorage: volumeSize,

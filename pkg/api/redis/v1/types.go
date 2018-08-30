@@ -59,6 +59,7 @@ type Storage struct {
 	UseExternalDisk bool    `json:"useExternalDisk"`
 	DataDiskSize    string  `json:"dataDiskSize"`
 	StorageClass    *string `json:"storageClass"`
+	FastMode        bool    `json:"fastMode"`
 }
 
 // RedisClusterStatus contains RedisCluster status

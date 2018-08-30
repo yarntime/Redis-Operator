@@ -46,11 +46,11 @@ func NewStatefulSetControl(lister applisters.StatefulSetLister, client clientset
 }
 
 func (p *StatefulSetControl) GetRedisClusterStatefulSet(redisCluster *rapi.RedisCluster) ([]*apps.StatefulSet, error) {
-	selector, err := CreateRedisClusterLabelSelector(redisCluster)
+	set, err := p.KubeClient.AppsV1beta1().StatefulSets(redisCluster.Namespace).Get(redisCluster.Name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
-	return p.StatefulSetLister.List(selector)
+	return []*apps.StatefulSet{set}, nil
 }
 
 func (p *StatefulSetControl) CreateStatefulSet(redisCluster *rapi.RedisCluster) (*apps.StatefulSet, error) {
@@ -87,7 +87,10 @@ func initSet(redisCluster *rapi.RedisCluster) (*apps.StatefulSet, error) {
 	}
 	podTemplate := *redisCluster.Spec.PodTemplate.DeepCopy()
 	podTemplate.Labels = desiredLabels
-	setName := redisCluster.Name
+	serviceName := redisCluster.Name
+	if redisCluster.Spec.ServiceName != "" {
+		serviceName = redisCluster.Spec.ServiceName
+	}
 	result := &apps.StatefulSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:            redisCluster.Name,
@@ -97,13 +100,13 @@ func initSet(redisCluster *rapi.RedisCluster) (*apps.StatefulSet, error) {
 		},
 		Spec: apps.StatefulSetSpec{
 			Replicas:    rapi.NewInt32(*redisCluster.Spec.NumberOfMaster * (1 + *redisCluster.Spec.ReplicationFactor)),
-			ServiceName: setName,
+			ServiceName: serviceName,
 			Template:    podTemplate,
 		},
 	}
 
 	if redisCluster.Spec.Storage != nil && redisCluster.Spec.Storage.UseExternalDisk {
-		configSetVolume(redisCluster.Spec.Storage.DataDiskSize, redisCluster.Spec.Storage.StorageClass, result, desiredLabels)
+		configSetVolume(redisCluster.Spec.Storage.DataDiskSize, redisCluster.Spec.Storage.StorageClass, redisCluster.Spec.Storage.FastMode, result, desiredLabels)
 	}
 
 	hash, err := GenerateMD5Spec(&result.Spec)
@@ -115,7 +118,7 @@ func initSet(redisCluster *rapi.RedisCluster) (*apps.StatefulSet, error) {
 	return result, nil
 }
 
-func configSetVolume(diskSize string, className *string, set *apps.StatefulSet, labels map[string]string) {
+func configSetVolume(diskSize string, className *string, fastMode bool, set *apps.StatefulSet, labels map[string]string) {
 	volumeSize, _ := resource.ParseQuantity(diskSize)
 	set.Spec.Template.Spec.Containers[0].VolumeMounts = []kapiv1.VolumeMount{
 		{
@@ -134,6 +137,7 @@ func configSetVolume(diskSize string, className *string, set *apps.StatefulSet, 
 				AccessModes: []kapiv1.PersistentVolumeAccessMode{
 					kapiv1.ReadWriteOnce,
 				},
+				FastMode: fastMode,
 				Resources: kapiv1.ResourceRequirements{
 					Requests: kapiv1.ResourceList{
 						kapiv1.ResourceStorage: volumeSize,

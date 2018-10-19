@@ -1,3 +1,4 @@
+Forked from https://github.com/AmadeusITGroup/Redis-Operator
 # Redis-Operator
 
 ![logo](docs/imgs/logo.png)
